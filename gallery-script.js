@@ -6,10 +6,10 @@
 // ============================================
 const CONFIG = {
   // Your Shopify store URL (without https://)
-  shopUrl: 'YOUR-STORE.myshopify.com',
+  shopUrl: 'dropscandies.myshopify.com',
   
   // Your Storefront API Access Token
-  storefrontAccessToken: 'YOUR_STOREFRONT_ACCESS_TOKEN',
+  storefrontAccessToken: 'f8f837e6b0397c06f037a0aef2aa1037',
   
   // Metaobject type (should match what you created)
   metaobjectType: 'gallery_item'
