@@ -85,7 +85,7 @@ const CONFIG = {
         }
       `;
 
-      const response = await fetch(`https://${CONFIG.shopUrl}/api/2024-10/graphql.json`, {
+      const response = await fetch(`https://${CONFIG.shopUrl}/api/2025-01/graphql.json`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
