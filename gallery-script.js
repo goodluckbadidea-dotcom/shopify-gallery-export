@@ -62,7 +62,8 @@ const CONFIG = {
 
     // Fetch gallery items using Shopify Storefront API
     async function fetchGalleryItems() {
-      const query = `
+      // Step 1: Get metaobjects with file GIDs
+      const metaObjectsQuery = `
         query GetGalleryItems {
           metaobjects(type: "${CONFIG.metaobjectType}", first: 250) {
             edges {
@@ -71,13 +72,6 @@ const CONFIG = {
                 fields {
                   key
                   value
-                  reference {
-                    ... on MediaImage {
-                      image {
-                        url
-                      }
-                    }
-                  }
                 }
               }
             }
@@ -85,48 +79,100 @@ const CONFIG = {
         }
       `;
 
-      const response = await fetch(`https://${CONFIG.shopUrl}/api/unstable/graphql.json`, {
+      const metaResponse = await fetch(`https://${CONFIG.shopUrl}/api/unstable/graphql.json`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Shopify-Storefront-Access-Token': CONFIG.storefrontAccessToken
         },
-        body: JSON.stringify({ query })
+        body: JSON.stringify({ query: metaObjectsQuery })
       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch gallery items: ${response.statusText}`);
+      if (!metaResponse.ok) {
+        throw new Error(`Failed to fetch gallery items: ${metaResponse.statusText}`);
       }
 
-      const data = await response.json();
-      console.log('GraphQL Response:', JSON.stringify(data, null, 2));
+      const metaData = await metaResponse.json();
       
-      if (data.errors) {
-        throw new Error(`GraphQL Error: ${data.errors[0].message}`);
+      if (metaData.errors) {
+        throw new Error(`GraphQL Error: ${metaData.errors[0].message}`);
       }
 
-      // Parse the metaobject data
-      const items = data.data.metaobjects.edges.map(edge => {
+      // Step 2: Extract file GIDs and build items
+      const items = [];
+      const fileGids = [];
+
+      metaData.data.metaobjects.edges.forEach(edge => {
         const fields = edge.node.fields;
         const item = { id: edge.node.id };
         
         fields.forEach(field => {
-          if (field.key === 'image' && field.reference && field.reference.image) {
-            item.imageUrl = field.reference.image.url;
-          } else if (field.key === 'description') {
+          if (field.key === 'description') {
             item.description = field.value;
           } else if (field.key === 'display_order') {
             item.displayOrder = parseInt(field.value) || 0;
+          } else if (field.key === 'image' && field.value && field.value.startsWith('gid://shopify/MediaImage/')) {
+            item.fileGid = field.value;
+            fileGids.push(field.value);
           }
         });
         
-        return item;
+        if (item.fileGid && item.description) {
+          items.push(item);
+        }
       });
 
-      // Sort by display order
-      items.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+      // Step 3: Fetch file URLs for all GIDs
+      if (fileGids.length > 0) {
+        const filesQuery = `
+          query GetFiles {
+            nodes(ids: [${fileGids.map(gid => `"${gid}"`).join(', ')}]) {
+              ... on MediaImage {
+                id
+                image {
+                  url
+                }
+              }
+            }
+          }
+        `;
 
-      return items;
+        const filesResponse = await fetch(`https://${CONFIG.shopUrl}/api/unstable/graphql.json`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Storefront-Access-Token': CONFIG.storefrontAccessToken
+          },
+          body: JSON.stringify({ query: filesQuery })
+        });
+
+        if (filesResponse.ok) {
+          const filesData = await filesResponse.json();
+          
+          if (filesData.data && filesData.data.nodes) {
+            // Map file GIDs to URLs
+            const fileUrlMap = {};
+            filesData.data.nodes.forEach(node => {
+              if (node && node.id && node.image && node.image.url) {
+                fileUrlMap[node.id] = node.image.url;
+              }
+            });
+
+            // Assign URLs to items
+            items.forEach(item => {
+              if (item.fileGid && fileUrlMap[item.fileGid]) {
+                item.imageUrl = fileUrlMap[item.fileGid];
+              }
+            });
+          }
+        }
+      }
+
+      // Filter out items without images and sort
+      const validItems = items.filter(item => item.imageUrl);
+      validItems.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
+
+      return validItems;
     }
 
     // Render the gallery grid
