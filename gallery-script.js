@@ -62,8 +62,7 @@ const CONFIG = {
 
     // Fetch gallery items using Shopify Storefront API
     async function fetchGalleryItems() {
-      // Step 1: Get metaobjects with file GIDs
-      const metaObjectsQuery = `
+      const query = `
         query GetGalleryItems {
           metaobjects(type: "${CONFIG.metaobjectType}", first: 250) {
             edges {
@@ -79,30 +78,29 @@ const CONFIG = {
         }
       `;
 
-      const metaResponse = await fetch(`https://${CONFIG.shopUrl}/api/unstable/graphql.json`, {
+      const response = await fetch(`https://${CONFIG.shopUrl}/api/unstable/graphql.json`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Shopify-Storefront-Access-Token': CONFIG.storefrontAccessToken
         },
-        body: JSON.stringify({ query: metaObjectsQuery })
+        body: JSON.stringify({ query })
       });
 
-      if (!metaResponse.ok) {
-        throw new Error(`Failed to fetch gallery items: ${metaResponse.statusText}`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch gallery items: ${response.statusText}`);
       }
 
-      const metaData = await metaResponse.json();
+      const data = await response.json();
       
-      if (metaData.errors) {
-        throw new Error(`GraphQL Error: ${metaData.errors[0].message}`);
+      if (data.errors) {
+        throw new Error(`GraphQL Error: ${data.errors[0].message}`);
       }
 
-      // Step 2: Extract file GIDs and build items
+      // Parse the metaobject data
       const items = [];
-      const fileGids = [];
 
-      metaData.data.metaobjects.edges.forEach(edge => {
+      data.data.metaobjects.edges.forEach(edge => {
         const fields = edge.node.fields;
         const item = { id: edge.node.id };
         
@@ -111,68 +109,21 @@ const CONFIG = {
             item.description = field.value;
           } else if (field.key === 'display_order') {
             item.displayOrder = parseInt(field.value) || 0;
-          } else if (field.key === 'image' && field.value && field.value.startsWith('gid://shopify/MediaImage/')) {
-            item.fileGid = field.value;
-            fileGids.push(field.value);
+          } else if (field.key === 'image_url') {
+            item.imageUrl = field.value;
           }
         });
         
-        if (item.fileGid && item.description) {
+        // Only add items that have both image URL and description
+        if (item.imageUrl && item.description) {
           items.push(item);
         }
       });
 
-      // Step 3: Fetch file URLs for all GIDs
-      if (fileGids.length > 0) {
-        const filesQuery = `
-          query GetFiles {
-            nodes(ids: [${fileGids.map(gid => `"${gid}"`).join(', ')}]) {
-              ... on MediaImage {
-                id
-                image {
-                  url
-                }
-              }
-            }
-          }
-        `;
+      // Sort by display order
+      items.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
 
-        const filesResponse = await fetch(`https://${CONFIG.shopUrl}/api/unstable/graphql.json`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Shopify-Storefront-Access-Token': CONFIG.storefrontAccessToken
-          },
-          body: JSON.stringify({ query: filesQuery })
-        });
-
-        if (filesResponse.ok) {
-          const filesData = await filesResponse.json();
-          
-          if (filesData.data && filesData.data.nodes) {
-            // Map file GIDs to URLs
-            const fileUrlMap = {};
-            filesData.data.nodes.forEach(node => {
-              if (node && node.id && node.image && node.image.url) {
-                fileUrlMap[node.id] = node.image.url;
-              }
-            });
-
-            // Assign URLs to items
-            items.forEach(item => {
-              if (item.fileGid && fileUrlMap[item.fileGid]) {
-                item.imageUrl = fileUrlMap[item.fileGid];
-              }
-            });
-          }
-        }
-      }
-
-      // Filter out items without images and sort
-      const validItems = items.filter(item => item.imageUrl);
-      validItems.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-
-      return validItems;
+      return items;
     }
 
     // Render the gallery grid
