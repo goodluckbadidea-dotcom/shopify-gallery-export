@@ -99,6 +99,7 @@ const CONFIG = {
       }
 
       const data = await response.json();
+      console.log('GraphQL Response:', JSON.stringify(data, null, 2));
       
       if (data.errors) {
         throw new Error(`GraphQL Error: ${data.errors[0].message}`);
