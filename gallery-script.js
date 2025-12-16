@@ -6,7 +6,7 @@
 // ============================================
 const CONFIG = {
   // Your Shopify store URL (without https://)
-  shopUrl: 'dropscandies.myshopify.com',
+  shopUrl: 'dropscandies.com',
   
   // Your Storefront API Access Token
   storefrontAccessToken: 'f8f837e6b0397c06f037a0aef2aa1037',
