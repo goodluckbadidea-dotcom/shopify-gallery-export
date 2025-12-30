@@ -448,12 +448,36 @@ async function exportPresentationDecks() {
         return;
     }
     
+    const exportBtn = document.getElementById('exportBtn');
+    exportBtn.disabled = true;
+    exportBtn.textContent = 'Downloading...';
+    
     // Download each selected PDF
-    selectedIndices.forEach((index, i) => {
+    for (let i = 0; i < selectedIndices.length; i++) {
+        const index = selectedIndices[i];
         const item = state.deckItems[index];
         
         // Stagger downloads slightly to avoid browser blocking
-        setTimeout(() => {
+        await new Promise(resolve => setTimeout(resolve, i * 500));
+        
+        try {
+            // Fetch the PDF and force download
+            const response = await fetch(item.pdfUrl);
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${item.title}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Clean up the blob URL
+            window.URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('Error downloading PDF:', error);
+            // Fallback to simple link
             const link = document.createElement('a');
             link.href = item.pdfUrl;
             link.download = `${item.title}.pdf`;
@@ -461,8 +485,11 @@ async function exportPresentationDecks() {
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-        }, i * 500);
-    });
+        }
+    }
+    
+    exportBtn.disabled = false;
+    exportBtn.textContent = 'Export PDF';
 }
 
 // Utility functions
