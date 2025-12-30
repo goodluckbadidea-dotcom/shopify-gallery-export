@@ -1,345 +1,469 @@
-// Gallery Export Tool - Main Script
-// Host this file on GitHub as: gallery-script.js
-
-// ============================================
-// CONFIGURATION - UPDATE THESE VALUES
-// ============================================
+// Configuration
 const CONFIG = {
-  // Your Shopify store URL (without https://)
-  shopUrl: 'dropscandies.com',
-  
-  // Your Storefront API Access Token
-  storefrontAccessToken: 'f8f837e6b0397c06f037a0aef2aa1037',
-  
-  // Metaobject type (should match what you created)
-  metaobjectType: 'gallery_item'
+    shopUrl: 'dropscandies.com',
+    storefrontToken: 'f8f837e6b0397c06f037a0aef2aa1037'
 };
 
-// ============================================
-// MAIN APPLICATION
-// ============================================
-(async function() {
-  'use strict';
+// State management
+const state = {
+    currentView: 'gallery',
+    galleryItems: [],
+    deckItems: [],
+    selectedGalleryItems: new Set(),
+    selectedDeckItems: new Set()
+};
 
-  // Wait for DOM to be ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', () => {
+    initializeToggle();
+    initializeControls();
+    loadAllData();
+});
 
-  async function init() {
-    // DOM Elements
-    const galleryContainer = document.getElementById('gallery-container');
-    const selectAllBtn = document.getElementById('select-all');
-    const deselectAllBtn = document.getElementById('deselect-all');
-    const exportBtn = document.getElementById('export-pdf');
-    const selectionCount = document.getElementById('selection-count');
-    const loadingOverlay = document.getElementById('pdf-loading');
+// Toggle functionality
+function initializeToggle() {
+    const toggleButtons = document.querySelectorAll('.toggle-btn');
+    
+    toggleButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const view = btn.dataset.view;
+            switchView(view);
+        });
+    });
+}
 
-    let galleryItems = [];
-    let checkboxes = [];
-
-    try {
-      // Fetch gallery items from Shopify
-      galleryItems = await fetchGalleryItems();
-      
-      if (galleryItems.length === 0) {
-        showEmptyState();
-        return;
-      }
-
-      // Render the gallery
-      renderGallery(galleryItems);
-      
-      // Setup event listeners
-      setupEventListeners();
-      
-    } catch (error) {
-      console.error('Error initializing gallery:', error);
-      showErrorState(error.message);
+function switchView(view) {
+    state.currentView = view;
+    
+    // Update toggle buttons
+    document.querySelectorAll('.toggle-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === view);
+    });
+    
+    // Update view containers
+    const galleryView = document.getElementById('galleryView');
+    const decksView = document.getElementById('decksView');
+    
+    if (view === 'gallery') {
+        galleryView.classList.add('active-view');
+        decksView.classList.remove('active-view');
+    } else {
+        galleryView.classList.remove('active-view');
+        decksView.classList.add('active-view');
     }
+    
+    updateExportButton();
+}
 
-    // Fetch gallery items using Shopify Storefront API
-    async function fetchGalleryItems() {
-      const query = `
-        query GetGalleryItems {
-          metaobjects(type: "${CONFIG.metaobjectType}", first: 250) {
-            edges {
-              node {
-                id
-                fields {
-                  key
-                  value
-                }
-              }
-            }
-          }
+// Controls
+function initializeControls() {
+    const selectAllBtn = document.getElementById('selectAll');
+    const exportBtn = document.getElementById('exportBtn');
+    
+    selectAllBtn.addEventListener('click', handleSelectAll);
+    exportBtn.addEventListener('click', handleExport);
+}
+
+function handleSelectAll() {
+    if (state.currentView === 'gallery') {
+        const allSelected = state.selectedGalleryItems.size === state.galleryItems.length;
+        
+        if (allSelected) {
+            state.selectedGalleryItems.clear();
+        } else {
+            state.galleryItems.forEach((_, index) => {
+                state.selectedGalleryItems.add(index);
+            });
         }
-      `;
+        
+        updateGalleryCheckboxes();
+    } else {
+        const allSelected = state.selectedDeckItems.size === state.deckItems.length;
+        
+        if (allSelected) {
+            state.selectedDeckItems.clear();
+        } else {
+            state.deckItems.forEach((_, index) => {
+                state.selectedDeckItems.add(index);
+            });
+        }
+        
+        updateDeckCheckboxes();
+    }
+    
+    updateExportButton();
+}
 
-      const response = await fetch(`https://${CONFIG.shopUrl}/api/unstable/graphql.json`, {
+function updateExportButton() {
+    const exportBtn = document.getElementById('exportBtn');
+    const hasSelection = state.currentView === 'gallery' 
+        ? state.selectedGalleryItems.size > 0 
+        : state.selectedDeckItems.size > 0;
+    
+    exportBtn.disabled = !hasSelection;
+}
+
+// Data Loading
+async function loadAllData() {
+    try {
+        showLoading();
+        
+        // Fetch both gallery items and presentation decks
+        const [galleryData, decksData] = await Promise.all([
+            fetchGalleryItems(),
+            fetchPresentationDecks()
+        ]);
+        
+        state.galleryItems = galleryData;
+        state.deckItems = decksData;
+        
+        renderGallery();
+        renderDecks();
+        
+        hideLoading();
+        
+    } catch (error) {
+        console.error('Error loading data:', error);
+        showError('Failed to load items. Please refresh the page and try again.');
+        hideLoading();
+    }
+}
+
+async function fetchGalleryItems() {
+    const query = `
+    {
+        metaobjects(type: "gallery_item", first: 50) {
+            edges {
+                node {
+                    id
+                    fields {
+                        key
+                        value
+                    }
+                }
+            }
+        }
+    }
+    `;
+    
+    const response = await fetch(`https://${CONFIG.shopUrl}/api/unstable/graphql.json`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'X-Shopify-Storefront-Access-Token': CONFIG.storefrontAccessToken
+            'Content-Type': 'application/json',
+            'X-Shopify-Storefront-Access-Token': CONFIG.storefrontToken
         },
         body: JSON.stringify({ query })
-      });
+    });
+    
+    const data = await response.json();
+    
+    if (data.errors) {
+        throw new Error('GraphQL errors: ' + JSON.stringify(data.errors));
+    }
+    
+    return parseGalleryItems(data);
+}
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch gallery items: ${response.statusText}`);
-      }
+async function fetchPresentationDecks() {
+    const query = `
+    {
+        metaobjects(type: "presentation_deck", first: 50) {
+            edges {
+                node {
+                    id
+                    fields {
+                        key
+                        value
+                    }
+                }
+            }
+        }
+    }
+    `;
+    
+    const response = await fetch(`https://${CONFIG.shopUrl}/api/unstable/graphql.json`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Storefront-Access-Token': CONFIG.storefrontToken
+        },
+        body: JSON.stringify({ query })
+    });
+    
+    const data = await response.json();
+    
+    if (data.errors) {
+        throw new Error('GraphQL errors: ' + JSON.stringify(data.errors));
+    }
+    
+    return parseDeckItems(data);
+}
 
-      const data = await response.json();
-      
-      if (data.errors) {
-        throw new Error(`GraphQL Error: ${data.errors[0].message}`);
-      }
-
-      // Parse the metaobject data
-      const items = [];
-
-      data.data.metaobjects.edges.forEach(edge => {
-        const fields = edge.node.fields;
+function parseGalleryItems(data) {
+    const items = [];
+    
+    data.data.metaobjects.edges.forEach(edge => {
         const item = { id: edge.node.id };
         
-        fields.forEach(field => {
-          if (field.key === 'description') {
-            item.description = field.value;
-          } else if (field.key === 'display_order') {
-            item.displayOrder = parseInt(field.value) || 0;
-          } else if (field.key === 'image_url') {
-            item.imageUrl = field.value;
-          }
+        edge.node.fields.forEach(field => {
+            if (field.key === 'image_url') {
+                item.imageUrl = field.value;
+            } else if (field.key === 'description') {
+                item.description = field.value;
+            }
         });
         
-        // Only add items that have both image URL and description
-        if (item.imageUrl && item.description) {
-          items.push(item);
+        if (item.imageUrl) {
+            items.push(item);
         }
-      });
+    });
+    
+    return items;
+}
 
-      // Sort by display order
-      items.sort((a, b) => (a.displayOrder || 0) - (b.displayOrder || 0));
-
-      return items;
-    }
-
-    // Render the gallery grid
-    function renderGallery(items) {
-      const gridHTML = items.map((item, index) => `
-        <div class="gallery-item" data-item-id="${item.id}">
-          <div class="gallery-item-checkbox">
-            <input 
-              type="checkbox" 
-              id="item-${index}" 
-              class="item-checkbox"
-              data-image-url="${item.imageUrl}"
-              data-description="${escapeHtml(item.description)}"
-            >
-            <label for="item-${index}">Select</label>
-          </div>
-          
-          <div class="gallery-item-image">
-            <img 
-              src="${item.imageUrl}" 
-              alt="${escapeHtml(item.description)}"
-              loading="lazy"
-            >
-          </div>
-          
-          <div class="gallery-item-description">
-            <p>${escapeHtml(item.description)}</p>
-          </div>
-        </div>
-      `).join('');
-
-      galleryContainer.innerHTML = `<div class="gallery-grid">${gridHTML}</div>`;
-      
-      // Cache checkbox references
-      checkboxes = Array.from(document.querySelectorAll('.item-checkbox'));
-    }
-
-    // Setup event listeners
-    function setupEventListeners() {
-      selectAllBtn.addEventListener('click', selectAll);
-      deselectAllBtn.addEventListener('click', deselectAll);
-      exportBtn.addEventListener('click', exportToPDF);
-      
-      checkboxes.forEach(checkbox => {
-        checkbox.addEventListener('change', updateSelectionUI);
-      });
-
-      updateSelectionUI();
-    }
-
-    // Select all items
-    function selectAll() {
-      checkboxes.forEach(checkbox => {
-        checkbox.checked = true;
-      });
-      updateSelectionUI();
-    }
-
-    // Deselect all items
-    function deselectAll() {
-      checkboxes.forEach(checkbox => {
-        checkbox.checked = false;
-      });
-      updateSelectionUI();
-    }
-
-    // Update selection count and UI
-    function updateSelectionUI() {
-      const selectedCount = checkboxes.filter(cb => cb.checked).length;
-      selectionCount.textContent = `${selectedCount} item${selectedCount !== 1 ? 's' : ''} selected`;
-      exportBtn.disabled = selectedCount === 0;
-
-      // Update visual state of gallery items
-      const galleryItemElements = document.querySelectorAll('.gallery-item');
-      galleryItemElements.forEach((item, index) => {
-        if (checkboxes[index].checked) {
-          item.classList.add('selected');
-        } else {
-          item.classList.remove('selected');
+function parseDeckItems(data) {
+    const items = [];
+    
+    data.data.metaobjects.edges.forEach(edge => {
+        const item = { id: edge.node.id };
+        
+        edge.node.fields.forEach(field => {
+            if (field.key === 'title') {
+                item.title = field.value;
+            } else if (field.key === 'pdf_url') {
+                item.pdfUrl = field.value;
+            } else if (field.key === 'thumbnail_url') {
+                item.thumbnailUrl = field.value;
+            }
+        });
+        
+        if (item.title && item.pdfUrl && item.thumbnailUrl) {
+            items.push(item);
         }
-      });
-    }
+    });
+    
+    return items;
+}
 
-    // Export to PDF
-    async function exportToPDF() {
-      const selectedCheckboxes = checkboxes.filter(cb => cb.checked);
-      
-      if (selectedCheckboxes.length === 0) {
-        alert('Please select at least one item to export.');
+// Rendering
+function renderGallery() {
+    const container = document.getElementById('galleryView');
+    container.innerHTML = '';
+    
+    state.galleryItems.forEach((item, index) => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'gallery-item';
+        if (state.selectedGalleryItems.has(index)) {
+            itemDiv.classList.add('selected');
+        }
+        
+        itemDiv.innerHTML = `
+            <input type="checkbox" ${state.selectedGalleryItems.has(index) ? 'checked' : ''}>
+            <img src="${item.imageUrl}" alt="Gallery item ${index + 1}">
+            <p>${item.description || ''}</p>
+        `;
+        
+        itemDiv.addEventListener('click', (e) => {
+            if (e.target.tagName !== 'INPUT') {
+                e.preventDefault();
+                toggleGallerySelection(index);
+            }
+        });
+        
+        const checkbox = itemDiv.querySelector('input[type="checkbox"]');
+        checkbox.addEventListener('change', () => {
+            toggleGallerySelection(index);
+        });
+        
+        container.appendChild(itemDiv);
+    });
+}
+
+function renderDecks() {
+    const container = document.getElementById('decksView');
+    container.innerHTML = '';
+    
+    state.deckItems.forEach((item, index) => {
+        const itemDiv = document.createElement('div');
+        itemDiv.className = 'deck-item';
+        if (state.selectedDeckItems.has(index)) {
+            itemDiv.classList.add('selected');
+        }
+        
+        itemDiv.innerHTML = `
+            <input type="checkbox" ${state.selectedDeckItems.has(index) ? 'checked' : ''}>
+            <img src="${item.thumbnailUrl}" alt="${item.title}">
+            <h3>${item.title}</h3>
+        `;
+        
+        itemDiv.addEventListener('click', (e) => {
+            if (e.target.tagName !== 'INPUT') {
+                e.preventDefault();
+                toggleDeckSelection(index);
+            }
+        });
+        
+        const checkbox = itemDiv.querySelector('input[type="checkbox"]');
+        checkbox.addEventListener('change', () => {
+            toggleDeckSelection(index);
+        });
+        
+        container.appendChild(itemDiv);
+    });
+}
+
+// Selection Management
+function toggleGallerySelection(index) {
+    if (state.selectedGalleryItems.has(index)) {
+        state.selectedGalleryItems.delete(index);
+    } else {
+        state.selectedGalleryItems.add(index);
+    }
+    
+    updateGalleryCheckboxes();
+    updateExportButton();
+}
+
+function toggleDeckSelection(index) {
+    if (state.selectedDeckItems.has(index)) {
+        state.selectedDeckItems.delete(index);
+    } else {
+        state.selectedDeckItems.add(index);
+    }
+    
+    updateDeckCheckboxes();
+    updateExportButton();
+}
+
+function updateGalleryCheckboxes() {
+    const items = document.querySelectorAll('#galleryView .gallery-item');
+    items.forEach((item, index) => {
+        const checkbox = item.querySelector('input[type="checkbox"]');
+        const isSelected = state.selectedGalleryItems.has(index);
+        checkbox.checked = isSelected;
+        item.classList.toggle('selected', isSelected);
+    });
+}
+
+function updateDeckCheckboxes() {
+    const items = document.querySelectorAll('#decksView .deck-item');
+    items.forEach((item, index) => {
+        const checkbox = item.querySelector('input[type="checkbox"]');
+        const isSelected = state.selectedDeckItems.has(index);
+        checkbox.checked = isSelected;
+        item.classList.toggle('selected', isSelected);
+    });
+}
+
+// Export
+async function handleExport() {
+    if (state.currentView === 'gallery') {
+        await exportGalleryPDF();
+    } else {
+        await exportPresentationDecks();
+    }
+}
+
+async function exportGalleryPDF() {
+    try {
+        const exportBtn = document.getElementById('exportBtn');
+        exportBtn.disabled = true;
+        exportBtn.textContent = 'Generating PDF...';
+        
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF();
+        let isFirstPage = true;
+        
+        const selectedIndices = Array.from(state.selectedGalleryItems).sort((a, b) => a - b);
+        
+        for (const index of selectedIndices) {
+            const item = state.galleryItems[index];
+            
+            if (!isFirstPage) {
+                pdf.addPage();
+            }
+            isFirstPage = false;
+            
+            try {
+                const img = await loadImage(item.imageUrl);
+                const imgWidth = 180;
+                const imgHeight = (img.height / img.width) * imgWidth;
+                
+                pdf.addImage(img, 'JPEG', 15, 15, imgWidth, imgHeight);
+                
+                if (item.description) {
+                    const yPosition = 15 + imgHeight + 10;
+                    pdf.setFontSize(12);
+                    const lines = pdf.splitTextToSize(item.description, 180);
+                    pdf.text(lines, 15, yPosition);
+                }
+            } catch (error) {
+                console.error('Error adding image to PDF:', error);
+            }
+        }
+        
+        pdf.save('gallery-export.pdf');
+        
+        exportBtn.disabled = false;
+        exportBtn.textContent = 'Export PDF';
+        
+    } catch (error) {
+        console.error('Error generating PDF:', error);
+        alert('Failed to generate PDF. Please try again.');
+        
+        const exportBtn = document.getElementById('exportBtn');
+        exportBtn.disabled = false;
+        exportBtn.textContent = 'Export PDF';
+    }
+}
+
+async function exportPresentationDecks() {
+    const selectedIndices = Array.from(state.selectedDeckItems).sort((a, b) => a - b);
+    
+    if (selectedIndices.length === 0) {
         return;
-      }
-
-      loadingOverlay.classList.remove('hidden');
-
-      try {
-        await generatePDF(selectedCheckboxes);
-      } catch (error) {
-        console.error('PDF generation error:', error);
-        alert('There was an error generating the PDF. Please try again.');
-      } finally {
-        loadingOverlay.classList.add('hidden');
-      }
     }
+    
+    // Download each selected PDF
+    selectedIndices.forEach((index, i) => {
+        const item = state.deckItems[index];
+        
+        // Stagger downloads slightly to avoid browser blocking
+        setTimeout(() => {
+            const link = document.createElement('a');
+            link.href = item.pdfUrl;
+            link.download = `${item.title}.pdf`;
+            link.target = '_blank';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }, i * 500);
+    });
+}
 
-    // Generate PDF from selected items
-    async function generatePDF(selectedCheckboxes) {
-      const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF({
-        orientation: 'portrait',
-        unit: 'in',
-        format: 'letter' // 8.5 x 11 inches
-      });
-
-      let isFirstPage = true;
-
-      for (const checkbox of selectedCheckboxes) {
-        if (!isFirstPage) {
-          pdf.addPage();
-        }
-        isFirstPage = false;
-
-        const imageUrl = checkbox.dataset.imageUrl;
-        const description = checkbox.dataset.description;
-
-        // Load image
-        const imgData = await loadImage(imageUrl);
-        
-        // Page dimensions
-        const pageWidth = 8.5;
-        const pageHeight = 11;
-        const topMargin = 1; // 1 inch from top
-        const sideMargin = 0.75; // 0.75 inch from sides
-        
-        // For 1080x1080 square images, calculate optimal size
-        // Max width available: 8.5 - (0.75 * 2) = 7 inches
-        const maxImageWidth = pageWidth - (sideMargin * 2);
-        
-        // Since images are square (1080x1080), use same value for width and height
-        // Set to 6.5 inches to leave room for description and look balanced
-        const imageSize = 6.5;
-        
-        // Center the square image horizontally
-        const xPosition = (pageWidth - imageSize) / 2;
-        const yPosition = topMargin;
-        
-        // Add image to PDF (square dimensions)
-        pdf.addImage(imgData, 'JPEG', xPosition, yPosition, imageSize, imageSize);
-        
-        // Add description below image
-        const descriptionY = yPosition + imageSize + 0.4; // 0.4 inch gap below image
-        const textMargin = 1; // Text margins from page edges
-        const maxTextWidth = pageWidth - (textMargin * 2);
-        
-        pdf.setFontSize(11);
-        pdf.setFont('helvetica', 'normal');
-        
-        // Word wrap the description
-        const textLines = pdf.splitTextToSize(description, maxTextWidth);
-        pdf.text(textLines, textMargin, descriptionY);
-      }
-
-      // Generate filename with timestamp
-      const timestamp = new Date().toISOString().slice(0, 10);
-      const filename = `gallery-export-${timestamp}.pdf`;
-      
-      // Save the PDF
-      pdf.save(filename);
-    }
-
-    // Load image as base64 data URL
-    function loadImage(url) {
-      return new Promise((resolve, reject) => {
+// Utility functions
+function loadImage(url) {
+    return new Promise((resolve, reject) => {
         const img = new Image();
-        img.crossOrigin = 'Anonymous';
-        
-        img.onload = function() {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(img, 0, 0);
-          resolve(canvas.toDataURL('image/jpeg', 0.95));
-        };
-        
-        img.onerror = function() {
-          reject(new Error(`Failed to load image: ${url}`));
-        };
-        
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = reject;
         img.src = url;
-      });
-    }
+    });
+}
 
-    // Show empty state
-    function showEmptyState() {
-      galleryContainer.innerHTML = `
-        <div class="empty-state">
-          <p>No gallery items found. Add items in Shopify admin under Content > Metaobjects > Gallery Items.</p>
-        </div>
-      `;
-    }
+function showLoading() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('galleryView').style.display = 'none';
+    document.getElementById('decksView').style.display = 'none';
+}
 
-    // Show error state
-    function showErrorState(message) {
-      galleryContainer.innerHTML = `
-        <div class="error-state">
-          <p><strong>Error loading gallery:</strong> ${escapeHtml(message)}</p>
-          <p style="margin-top: 10px; font-size: 14px;">Make sure your Storefront API token is configured correctly in the gallery-script.js file.</p>
-        </div>
-      `;
-    }
+function hideLoading() {
+    document.getElementById('loading').style.display = 'none';
+}
 
-    // Utility: Escape HTML
-    function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-  }
-})();
+function showError(message) {
+    const errorDiv = document.getElementById('error');
+    errorDiv.textContent = message;
+    errorDiv.style.display = 'block';
+}
