@@ -105,26 +105,30 @@ function updateExportButton() {
 
 // Data Loading
 async function loadAllData() {
+    showLoading();
+    
     try {
-        showLoading();
-        
-        // Fetch both gallery items and presentation decks
-        const [galleryData, decksData] = await Promise.all([
-            fetchGalleryItems(),
-            fetchPresentationDecks()
-        ]);
-        
+        // Always fetch gallery items
+        const galleryData = await fetchGalleryItems();
         state.galleryItems = galleryData;
-        state.deckItems = decksData;
-        
         renderGallery();
-        renderDecks();
+        
+        // Try to fetch presentation decks, but don't fail if it doesn't work
+        try {
+            const decksData = await fetchPresentationDecks();
+            state.deckItems = decksData;
+            renderDecks();
+        } catch (deckError) {
+            console.warn('Presentation decks not available:', deckError);
+            state.deckItems = [];
+            renderDecks(); // Render empty decks view
+        }
         
         hideLoading();
         
     } catch (error) {
-        console.error('Error loading data:', error);
-        showError('Failed to load items. Please refresh the page and try again.');
+        console.error('Error loading gallery items:', error);
+        showError('Failed to load gallery items. Please refresh the page and try again.');
         hideLoading();
     }
 }
@@ -158,6 +162,7 @@ async function fetchGalleryItems() {
     const data = await response.json();
     
     if (data.errors) {
+        console.error('Gallery fetch errors:', data.errors);
         throw new Error('GraphQL errors: ' + JSON.stringify(data.errors));
     }
     
@@ -193,6 +198,7 @@ async function fetchPresentationDecks() {
     const data = await response.json();
     
     if (data.errors) {
+        console.error('Presentation decks fetch errors:', data.errors);
         throw new Error('GraphQL errors: ' + JSON.stringify(data.errors));
     }
     
@@ -201,6 +207,10 @@ async function fetchPresentationDecks() {
 
 function parseGalleryItems(data) {
     const items = [];
+    
+    if (!data.data || !data.data.metaobjects) {
+        return items;
+    }
     
     data.data.metaobjects.edges.forEach(edge => {
         const item = { id: edge.node.id };
@@ -223,6 +233,10 @@ function parseGalleryItems(data) {
 
 function parseDeckItems(data) {
     const items = [];
+    
+    if (!data.data || !data.data.metaobjects) {
+        return items;
+    }
     
     data.data.metaobjects.edges.forEach(edge => {
         const item = { id: edge.node.id };
@@ -249,6 +263,11 @@ function parseDeckItems(data) {
 function renderGallery() {
     const container = document.getElementById('galleryView');
     container.innerHTML = '';
+    
+    if (state.galleryItems.length === 0) {
+        container.innerHTML = '<p style="text-align: center; padding: 40px; color: #666;">No gallery items found.</p>';
+        return;
+    }
     
     state.galleryItems.forEach((item, index) => {
         const itemDiv = document.createElement('div');
@@ -282,6 +301,11 @@ function renderGallery() {
 function renderDecks() {
     const container = document.getElementById('decksView');
     container.innerHTML = '';
+    
+    if (state.deckItems.length === 0) {
+        container.innerHTML = '<p style="text-align: center; padding: 40px; color: #666;">No presentation decks found. Add decks in Shopify Admin.</p>';
+        return;
+    }
     
     state.deckItems.forEach((item, index) => {
         const itemDiv = document.createElement('div');
@@ -453,13 +477,25 @@ function loadImage(url) {
 }
 
 function showLoading() {
-    document.getElementById('loading').style.display = 'block';
-    document.getElementById('galleryView').style.display = 'none';
-    document.getElementById('decksView').style.display = 'none';
+    const loadingDiv = document.getElementById('loading');
+    const galleryView = document.getElementById('galleryView');
+    const decksView = document.getElementById('decksView');
+    
+    loadingDiv.style.display = 'block';
+    galleryView.style.display = 'none';
+    decksView.style.display = 'none';
 }
 
 function hideLoading() {
-    document.getElementById('loading').style.display = 'none';
+    const loadingDiv = document.getElementById('loading');
+    const galleryView = document.getElementById('galleryView');
+    const decksView = document.getElementById('decksView');
+    
+    loadingDiv.style.display = 'none';
+    
+    // Restore view display by removing inline styles
+    galleryView.style.display = '';
+    decksView.style.display = '';
 }
 
 function showError(message) {
